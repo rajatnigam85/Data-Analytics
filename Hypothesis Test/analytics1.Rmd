@@ -1,0 +1,65 @@
+```{r}
+# Load Libraries
+require(readr)
+require(plotly)
+require(data.table)
+```
+
+```{r}
+# Load the data
+responses <- read_csv("../Data/imputed_responses.csv")
+```
+
+
+```{r}
+# Groups of Column Number
+music.group <- c(1:19)
+movie.group <- c(20:31)
+interest.group <- c(32:63)
+phobia.group <- c(64:73)
+health.group <- c(74:76)
+personality.group <- c(77:133)
+spend.group <- c(134:140)
+demographics.group <- c(141:150)
+```
+
+```{r}
+# Function to create Groups of variables with gender using group vector and gender index
+group <- function(df, category, genindex){
+  x <- df[,category]
+  x <- cbind(x, df[,genindex])
+  return(x)
+}
+# Gender-Phobia Group
+gender.phobia <- group(responses, phobia.group, 145)
+gender.phob.female <- gender.phobia[which(gender.phobia$Gender == 'female'),-11]
+avg.phob.female <- sapply(gender.phob.female, mean)
+gender.phob.male <- gender.phobia[which(gender.phobia$Gender == 'male'),-11]
+avg.phob.male <- sapply(gender.phob.male, mean)
+d <- as.data.frame(avg.phob.female)
+d <- cbind(d, avg.phob.male)
+setDT(d, keep.rownames = T)
+colnames(d)[1] <- "Variables"
+colnames(d)[2] <- "Female"
+colnames(d)[3] <- "Male"
+p <- plot_ly(d, x = ~Variables, y = ~Male, type = 'bar', name = 'Male') %>%
+  add_trace(y = ~Female, name = 'Female') %>%
+  layout(yaxis = list(title = 'Average Response'), barmode = 'group',title = "Men V/s Women Phobia Average Response")
+p
+```
+
+```{r}
+# Now the Means of the response and the visualization of the above responses shows that the hypothesis
+# of "Do women fear a certain phenomena more than men?" is true.
+# Now Let's test the above inference using the t-test
+female_avg_response <- d$Female
+male_avg_response <- d$Male
+t.test(female_avg_response, male_avg_response, alternative = "greater")
+# So Using t-test we tested the hypothesis of mean average response from female for any phobia having # a smaller mean average response from male for any phobia. Hence with a p-value of 0.003 being lesser # than 0.05 significant level indicates that the hypothesis of average mean response for female for
+# any phobia is greater than the average mean response for male response for any phobia is not
+# plausible hence the alternative hypothesis is true.
+# Let's test this with another statistics test: Wilcoxon Rank Sum test
+wilcox.test(female_avg_response, male_avg_response, alternative = "g")
+# So Using wilcoxon-test we tested the hypothesis of mean average response from female for any phobia having a smaller mean average response from male for any phobia. Hence with a p-value of 0.005 being lesser than 0.05 significant level indicates that the hypothesis of average mean response for female for any phobia is greater than the average mean response for male response for any phobia is not plausible hence the alternative hypothesis is true.
+# Hence we can infer that women do fear any phenomena greater than men .
+```

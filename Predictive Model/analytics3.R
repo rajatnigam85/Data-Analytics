@@ -1,0 +1,217 @@
+# Load Libraries
+require(readr)
+require(keras)
+require(caret)
+require(data.table)
+
+# Load the data
+responses <- read_csv("../Data/imputed_responses.csv")
+
+# Subset the Data for train and test
+set.seed(10)
+datasplit <- sort(sample(nrow(responses), 0.7*nrow(responses)))
+responses.train <- responses[datasplit, ]
+responses.test <- responses[-datasplit, ]
+
+# Groups of Column Number
+interest.group <- c(32:63)
+spend.group <- c(134:140)
+
+# Creating a function to convert the columns of the dataframe to vector
+col.to.vec <- function(df, colnum){
+  vec <- unlist(df[,colnum])
+  return(vec)
+}
+
+# Create a function to convert the multilabel of 1 to 5 to classes of 1 to 3 as 0 and 4,5 as 1
+convert.two.target <- function(x, threshold){
+  x[which(x <= threshold)] <- 0
+  x[which(x > threshold)] <- 1
+  return(x)
+}
+
+# Generate Table of counts
+gen.table <- function(x){
+  return(table(x))
+}
+
+# Drop Names
+drop.name <- function(x){
+  names(x) <- NULL
+  return(x)
+}
+
+# Build Model
+build_model <- function(x){
+  model <- keras_model_sequential()
+  model %>%
+    layer_dense(units = x, activation = 'relu', input_shape=c(32))
+  return(model)
+}
+
+# Add Layer to Model
+add_layer <- function(model, unit, activate){
+  model %>%
+    layer_dense(units=unit , activation=activate)
+  return(model)
+}
+
+
+# Compile the Model
+compile.model <- function(model, lossfn, optfn, metric){
+  model %>% compile(
+      loss = lossfn,
+      optimizer = optfn,
+      metrics = metric
+  )
+  return(model)
+}
+# Fit Data to Model
+run_model <- function(x, y, num_iteration, batchsize, split){
+  history <- model %>% fit(
+      x,
+      y,
+      epochs = num_iteration,
+      batch_size = batchsize,
+      validation_split = split
+  )
+  return(history)
+}
+
+# Plot the model loss of the training data and validation data
+model.loss.plot <- function(mhis){
+  p <- plot(mhis$metrics$loss, main = "Model Loss", xlab = "epoch/iteration", ylab = "loss", col="blue", type="l")
+  lines(mhis$metrics$val_loss, col="green")
+  legend("topright", c("train", "validation"), col=c("blue", "green"), lty=c(1,1))
+  return(p)
+}
+
+# Plot the accuracy of the training data and validation data
+model.acc.plot <- function(mhis){
+  p <- plot(mhis$metrics$acc, main="Model Accuracy", xlab = "epoch/iteration", ylab="accuracy", col="blue", type="l")
+  lines(mhis$metrics$val_acc, col="green")
+  legend("bottomright", c("train","test"), col=c("blue", "green"), lty=c(1,1))
+  return(p)
+}
+
+# Predict the classes for the test data
+model.predict <- function(model, test, batchsize){
+  classes <- model %>% predict_classes(test, batch_size = batchsize)
+  return(classes)
+}
+
+# Evaluate on test data and labels
+model.score <- function(model, test, batchsize, testlabel){
+  score <- model %>% evaluate(test, testlabel, batch_size = batchsize)
+  return(score)
+}
+
+# Plot the accuracy of model for test data
+model.acc.test.plot <- function(ground.truth, predicted.value){
+  p <- plot(predicted.value, main="Plot of Predicted and Correct Value", xlab = "Number of Observation", ylab = "Class", col ="blue", type = "p")
+  points(ground.truth, col = "green")
+  legend("bottomright", c("Predicted", "Ground Truth"), col=c("blue", "green"), lty = c(1,1))
+  return(p)
+}
+
+# Create train and test vector
+responses.save.train <-col.to.vec(responses.train, spend.group[1])
+responses.save.test <- col.to.vec(responses.test, spend.group[1])
+
+responses.save.test <- drop.name(responses.save.test)
+responses.save.train <- drop.name(responses.save.train)
+
+# Changing the multilabels to two labels
+responses.save.train <- convert.two.target(responses.save.train, 3)
+responses.save.test <- convert.two.target(responses.save.test, 3)
+
+responses.train.features.spend <- as.matrix(responses.train[,interest.group])
+responses.test.features.spend <- as.matrix(responses.test[,interest.group])
+dimnames(responses.test.features.spend) <- NULL
+dimnames(responses.train.features.spend) <- NULL
+
+# Using correlation to find some of the highly correlated features
+df <- responses[,interest.group]
+df <- cbind(df, convert.two.target(col.to.vec(responses, spend.group[1]),3))
+colnames(df)[33] <- "Save"
+cor_feature_target <- cor(df$Save, df[,-33], method = "pearson")
+final_df <- as.data.frame(t(cor_feature_target))
+colnames(final_df)[1] <- "correlation"
+final_df.abs <-abs(final_df)
+final_df.abs <- setDT(final_df.abs, keep.rownames = TRUE)[]
+colnames(final_df.abs)[1] <- "Variable"
+final_sorted <- data.frame(arrange(final_df.abs, desc(correlation)))
+final_sorted$Variable <- factor(final_sorted$Variable, levels = final_sorted$Variable)
+plot_ly(final_sorted, x = ~Variable, y =~correlation,  type= "bar")%>%
+layout(yaxis = list(title = 'Correlation Value'), title = "Variables correlated with target variable")
+# So we can see that Top 10 correlated features consist of more academic subject like Maths, Geography, Medicine, Biology, Chemistry, Reading. Hence this inference makes sense because those who are studious or academician tend to save more money.
+
+# Categorical for train
+train.label.finances <- to_categorical(responses.save.train)
+# Categorical for test
+test.label.finances <- to_categorical(responses.save.test)
+
+model <- build_model(11)
+model <- add_layer(model, 2, 'tanh')
+model <- add_layer(model, 2, 'relu')
+model <- add_layer(model, 2, 'softmax')
+model <- compile.model(model, 'categorical_crossentropy', 'adam', 'accuracy')
+summary(model)
+
+# Running model on spending on finances of youth
+model.history <- run_model(responses.train.features.spend, train.label.finances, 200, 20, 0.2)
+
+# Plotting the Loss of the model
+model.loss.plot(model.history)
+# Plotting the accuracy of the model
+acc.plot <- model.acc.plot(model.history)
+# Predicting for test data
+class.predicted <- model.predict(model, responses.test.features.spend, 100)
+# Tabulating the result
+table(responses.save.test, class.predicted)
+# Score of the model
+score <- model.score(model, responses.test.features.spend, 100, test.label.finances)
+print(score)
+# Plot of Predicted vs actual
+truth.plot <- model.acc.test.plot(responses.save.test, class.predicted)
+# Confusion Matrix
+conf.mat <- confusionMatrix(responses.save.test, class.predicted)
+conf.mat
+
+# Saving the Model after training
+save_model_hdf5(model, "savingmodel2.h5")
+save_model_weights_hdf5(model, "savingweights2.h5")
+
+# Saved Model A
+saved_modelA <- load_model_hdf5("savingmodel.h5")
+saved_modelA %>% load_model_weights_hdf5("savingweights.h5")
+
+# Running Prediction and getting accuracy
+class.predictedA <- model.predict(saved_modelA, responses.test.features.spend, 100)
+# Tabulating the result
+table(responses.save.test, class.predictedA)
+# Score of the model
+scoreA <- model.score(saved_modelA, responses.test.features.spend, 100, test.label.finances)
+print(scoreA)
+# Plot of Predicted vs actual
+model.acc.test.plot(responses.save.test, class.predictedA)
+# Confusion Matrix
+conf.matA <- confusionMatrix(responses.save.test, class.predictedA)
+conf.matA
+
+# Saved Model B
+saved_modelB <- load_model_hdf5("savingmodel2.h5")
+saved_modelB %>% load_model_weights_hdf5("savingweights2.h5")
+
+# Running Prediction and getting accuracy
+class.predictedB <- model.predict(saved_modelB, responses.test.features.spend, 100)
+# Tabulating the result
+table(responses.save.test, class.predictedB)
+# Score of the model
+scoreB <- model.score(saved_modelB, responses.test.features.spend, 100, test.label.finances)
+print(scoreB)
+# Plot of Predicted vs actual
+model.acc.test.plot(responses.save.test, class.predictedB)
+# Confusion Matrix
+conf.matB <- confusionMatrix(responses.save.test, class.predictedB)
+conf.matB

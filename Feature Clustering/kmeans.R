@@ -1,0 +1,59 @@
+# Load all the required packages
+require(readr)
+require(factoextra)
+require(NbClust)
+require(cluster)
+require(class)
+require(caret)
+require(plotly)
+
+# Load the dataset
+imputed_responses <- read_csv("../Data/imputed_responses.csv")
+
+# Subset the dataset on the feature to cluster on
+music.group <- imputed_responses[,1:19]
+
+# Perform K means clustering
+nc.kmeans <- NbClust(music.group, min.nc = 2, max.nc = 15, method = "kmeans")
+table(nc.kmeans$Best.n[1,])
+
+# Form K means clustering with 3 optimal cluster
+set.seed(100)
+km_music <- kmeans(music.group, 3)
+
+# Plot the cluster
+clusplot(music.group, km_music$cluster, color = T, shade = T, labels = 4, main = 'Music cluster', lines = 0)
+
+# Data present in the three cluster
+aggregate(music.group, by=list(cluster = km_music$cluster), mean)
+aggregate(music.group, by=list(cluster = km_music$cluster), median)
+
+# Building a classifier to classify the musical preferences in these two clusters and testing the accuracy.
+music.group$Class <- km_music$cluster
+set.seed(10)
+split <- sort(sample(nrow(music.group), 0.7*nrow(music.group)))
+train.music <- music.group[split,]
+test.music <- music.group[-split,]
+
+# Building A knn Classifier
+set.seed(20)
+model <- knn(train = train.music, test = test.music, cl = train.music$Class , k = 16)
+class(model)
+summary(model)
+
+table(model, test.music$Class)
+conf <- confusionMatrix(test.music$Class, model)
+conf
+
+set.seed(200)
+neighbour <- c(1:100)
+accuracy <- c()
+for(i in neighbour){
+  model_all <- knn(train = train.music, test = test.music, cl = train.music$Class, k = i)
+  accuracy[i] <- confusionMatrix(model_all, test.music$Class)$overall["Accuracy"]
+}
+names(accuracy) <- neighbour
+
+# Plotting the accuracy with number of neighbours
+plot_ly(x = ~neighbour, y = ~accuracy, type = 'scatter', mode = 'line') %>%
+  layout(yaxis = list(title = "Accuracy"), xaxis = list(title = "Number of Neighbours"), title = "Accuracy with varying Neighbours")
